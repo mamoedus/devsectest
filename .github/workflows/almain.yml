@@ -3,7 +3,7 @@ name: Full Security Scan
 on:
   push:
     branches: [devsec]
-  workflow_dispatch:  # Позволяет запускать вручную
+  workflow_dispatch:
 
 jobs:
   go-scan:
@@ -16,20 +16,21 @@ jobs:
       with:
         go-version: '1.21'
     
-    - name: Run golangci-lint (full scan)
+    - name: Install tools
       run: |
         go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-        golangci-lint run ./... --out-format=github-actions
-        
-    - name: Run gosec (full scan)
-      run: |
         go install github.com/securego/gosec/v2/cmd/gosec@latest
-        gosec -fmt=sonarqube ./... > gosec-report.json || true
+    
+    - name: Run golangci-lint
+      run: golangci-lint run ./... --out-format=github-actions
         
-    - name: Upload gosec report
-      uses: actions/upload-artifact@v3
+    - name: Run gosec
+      run: gosec -fmt=json ./... > gosec-report.json || true
+        
+    - name: Upload report
+      uses: actions/upload-artifact@v4  # Используем версию v4
       with:
-        name: gosec-report
+        name: go-security-report
         path: gosec-report.json
 
   python-scan:
@@ -42,20 +43,20 @@ jobs:
       with:
         python-version: '3.10'
     
-    - name: Run Bandit (full scan)
+    - name: Install tools
       run: |
-        pip install bandit
-        bandit -r PolyPrep/ -f json -o bandit-report.json || true
+        pip install bandit safety
+    
+    - name: Run Bandit
+      run: bandit -r PolyPrep/ -f json -o bandit-report.json || true
         
-    - name: Run Safety (full scan)
-      run: |
-        pip install safety
-        safety check --json --output safety-report.json || true
+    - name: Run Safety
+      run: safety check --json --output safety-report.json || true
         
-    - name: Upload Python reports
-      uses: actions/upload-artifact@v3
+    - name: Upload reports
+      uses: actions/upload-artifact@v4
       with:
-        name: python-reports
+        name: python-security-reports
         path: |
           bandit-report.json
           safety-report.json
@@ -70,22 +71,24 @@ jobs:
       with:
         node-version: '18'
     
-    - name: Run npm audit (full scan)
+    - name: Install dependencies
       working-directory: ./PolyPrep/static/js
-      run: |
-        npm install
-        npm audit --json > npm-audit.json || true
+      run: npm install
+    
+    - name: Run npm audit
+      working-directory: ./PolyPrep/static/js
+      run: npm audit --json > npm-audit.json || true
         
-    - name: Run Snyk (full scan)
+    - name: Run Snyk
       working-directory: ./PolyPrep/static/js
       run: |
         npm install -g snyk
         snyk test --json > snyk-report.json || true
         
-    - name: Upload JS reports
-      uses: actions/upload-artifact@v3
+    - name: Upload reports
+      uses: actions/upload-artifact@v4
       with:
-        name: js-reports
+        name: js-security-reports
         path: |
-          PolyPrep/static/js/npm-audit.json
-          PolyPrep/static/js/snyk-report.json
+          npm-audit.json
+          snyk-report.json
