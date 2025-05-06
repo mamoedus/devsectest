@@ -1,0 +1,75 @@
+version: "3.3"
+
+services:
+  backend:
+    build:
+      context: backend/core
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    environment:
+      KEYCLOAK_URL: "http://90.156.170.153:8091"
+      REALM: "master"
+      CLIENT_ID: "polyclient"
+      CLIENT_SECRET: "WYB2ObPJDY2xBDjpus9wQiWPo96b4Gcs"
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3000"  # Сопоставляем порт 3000 контейнера с портом 3000 хоста
+    volumes:
+       - ./frontend/polyprep-web/src:/app/src
+       - ./frontend/polyprep-web/public:/app/public
+    environment:
+      - CHOKIDAR_USEPOLLING=true  # Для работы файлового вотчера в Docker
+      - REACT_APP_BACKEND_URL=http://90.156.170.153:8081
+      - HOST=0.0.0.0
+    depends_on:
+      - backend
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:20.0.1
+    restart: always
+    command: start-dev
+    ports:
+      - "8091:8080"
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME_STRICT: false
+      KC_HOSTNAME_STRICT_HTTPS: false
+      KC_HTTP_ENABLED: true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/realms/master"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - data:/opt/keycloak/data/
+      - ./backend/keycloak/keycloak-2fa-email-authenticator.jar:/opt/keycloak/providers/keycloak-2fa-email-authenticator.jar
+      - ./backend/keycloak/my-custom-theme:/opt/keycloak/themes/my-custom-theme/
+
+  postgres:
+    image: postgres:13
+    restart: always
+    environment:
+      POSTGRES_DB: bd
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Md_rzy3dBdKmAMYZC2a_
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bd"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+volumes:
+  data:
+  postgres_data:
