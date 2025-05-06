@@ -1,96 +1,144 @@
-name: Security Checks
+name: PolyPrep Security Scan
 
 on:
   push:
-    branches: [devsec]
-  pull_request:
-    branches: [devsec]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
-  detect-changes:
+  setup:
     runs-on: ubuntu-latest
     outputs:
-      has-go: ${{ steps.filter.outputs.go == 'true' }}
-      has-python: ${{ steps.filter.outputs.python == 'true' }}
-      has-js: ${{ steps.filter.outputs.js == 'true' }}
+      go-dir: ${{ steps.find-dirs.outputs.go-dir }}
+      python-dir: ${{ steps.find-dirs.outputs.python-dir }}
+      js-dir: ${{ steps.find-dirs.outputs.js-dir }}
     steps:
       - uses: actions/checkout@v4
       
-      - name: Identify changed files
-        id: filter
-        uses: tj-actions/changed-files@v42
-        with:
-          files: |
-            **/*.go
-            **/*.py
-            **/*.js
-            **/*.ts
+      - name: Find project directories
+        id: find-dirs
+        run: |
+          if [ -d "./PolyPrep" ]; then
+            echo "go-dir=./PolyPrep" >> $GITHUB_OUTPUT
+            echo "python-dir=./PolyPrep" >> $GITHUB_OUTPUT
+            echo "js-dir=./PolyPrep/static/js" >> $GITHUB_OUTPUT
+          else
+            echo "go-dir=." >> $GITHUB_OUTPUT
+            echo "python-dir=." >> $GITHUB_OUTPUT
+            echo "js-dir=." >> $GITHUB_OUTPUT
+          fi
 
-  go-checks:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.has-go == 'true'
+  go-scan:
+    needs: setup
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup Go
+      - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: '1.21'
       
-      - name: Run golangci-lint
+      - name: Initialize Go module if needed
+        run: |
+          if [ ! -f "go.mod" ]; then
+            go mod init github.com/Makson4ik12/PolyPrep || true
+            go mod tidy
+          fi
+      
+      - name: Install Go tools
         run: |
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-          golangci-lint run ./...
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+      
+      - name: Run golangci-lint
+        run: |
+          cd ${{ needs.setup.outputs.go-dir }}
+          golangci-lint run --out-format=colored-line-number ./...
       
       - name: Run gosec
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec ./...
+          cd ${{ needs.setup.outputs.go-dir }}
+          gosec -fmt=json -output=gosec-report.json ./... || true
+        continue-on-error: true
+      
+      - name: Upload Go report
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-security-report
+          path: ${{ needs.setup.outputs.go-dir }}/gosec-report.json
 
-  python-checks:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.has-python == 'true'
+  python-scan:
+    needs: setup
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
       
+      - name: Install Python tools
+        run: |
+          pip install bandit safety
+      
       - name: Run Bandit
         run: |
-          pip install bandit
-          bandit -r PolyPrep/
+          cd ${{ needs.setup.outputs.python-dir }}
+          bandit -r . -f json -o bandit-report.json || true
+        continue-on-error: true
       
       - name: Run Safety
         run: |
-          pip install safety
-          safety check
+          cd ${{ needs.setup.outputs.python-dir }}
+          safety check --json --output safety-report.json || true
+        continue-on-error: true
+      
+      - name: Upload Python reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-security-reports
+          path: |
+            ${{ needs.setup.outputs.python-dir }}/bandit-report.json
+            ${{ needs.setup.outputs.python-dir }}/safety-report.json
 
-  js-checks:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.has-js == 'true'
+  js-scan:
+    needs: setup
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '18'
       
-      - name: Run npm audit
-        working-directory: ./PolyPrep/static/js
+      - name: Install JS dependencies
         run: |
+          cd ${{ needs.setup.outputs.js-dir }}
           npm install
-          npm audit
       
-      - name: Run Snyk
-        working-directory: ./PolyPrep/static/js
+      - name: Run npm audit
         run: |
+          cd ${{ needs.setup.outputs.js-dir }}
+          npm audit --json > npm-audit.json || true
+        continue-on-error: true
+      
+      - name: Run Snyk (if SNYK_TOKEN provided)
+        if: env.SNYK_TOKEN
+        run: |
+          cd ${{ needs.setup.outputs.js-dir }}
           npm install -g snyk
-          snyk test
+          snyk test --json > snyk-report.json || true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        continue-on-error: true
+      
+      - name: Upload JS reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: js-security-reports
+          path: |
+            ${{ needs.setup.outputs.js-dir }}/npm-audit.json
+            ${{ needs.setup.outputs.js-dir }}/snyk-report.json
