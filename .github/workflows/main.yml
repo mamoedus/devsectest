@@ -18,10 +18,10 @@ jobs:
       - name: Find project directories
         id: find-dirs
         run: |
-          if [ -d "./PolyPrep" ]; then
-            echo "go-dir=./PolyPrep" >> $GITHUB_OUTPUT
-            echo "python-dir=./PolyPrep" >> $GITHUB_OUTPUT
-            echo "js-dir=./PolyPrep/static/js" >> $GITHUB_OUTPUT
+          if [ -d "./devsectest" ]; then
+            echo "go-dir=./devsectest" >> $GITHUB_OUTPUT
+            echo "python-dir=./devsectest" >> $GITHUB_OUTPUT
+            echo "js-dir=./devsectest/static/js" >> $GITHUB_OUTPUT
           else
             echo "go-dir=." >> $GITHUB_OUTPUT
             echo "python-dir=." >> $GITHUB_OUTPUT
@@ -42,7 +42,7 @@ jobs:
       - name: Initialize Go module if needed
         run: |
           if [ ! -f "go.mod" ]; then
-            go mod init github.com/Makson4ik12/PolyPrep || true
+            go mod init github.com/mamoedus/devsectest || true
             go mod tidy
           fi
       
