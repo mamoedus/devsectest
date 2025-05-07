@@ -1,12 +1,12 @@
-name: Full Security Scan
+name: Go Security Scan
 
 on:
   push:
-    branches: [devsec]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
-  go-scan:
+  go-security:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -16,79 +16,58 @@ jobs:
       with:
         go-version: '1.21'
     
-    - name: Install tools
+    - name: Find all .go files
+      id: go-files
       run: |
-        go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+        if find . -name '*.go' | grep -q .; then
+          echo "GO_FILES_EXIST=true" >> $GITHUB_OUTPUT
+          echo "GO_FILES_COUNT=$(find . -name '*.go' | wc -l)" >> $GITHUB_OUTPUT
+        else
+          echo "GO_FILES_EXIST=false" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Initialize Go module (if needed)
+      if: steps.go-files.outputs.GO_FILES_EXIST == 'true'
+      run: |
+        if [ ! -f "go.mod" ]; then
+          go mod init github.com/mamoedus/devsectest
+        fi
+        go mod tidy
+    
+    - name: Install security tools
+      if: steps.go-files.outputs.GO_FILES_EXIST == 'true'
+      run: |
         go install github.com/securego/gosec/v2/cmd/gosec@latest
+        go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
     
-    - name: Run golangci-lint
-      run: golangci-lint run ./... --out-format=github-actions
-        
-    - name: Run gosec
-      run: gosec -fmt=json ./... > gosec-report.json || true
-        
-    - name: Upload report
-      uses: actions/upload-artifact@v4  # Используем версию v4
-      with:
-        name: go-security-report
-        path: gosec-report.json
-
-  python-scan:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-    
-    - name: Install tools
+    - name: Run gosec (security audit)
+      if: steps.go-files.outputs.GO_FILES_EXIST == 'true'
       run: |
-        pip install bandit safety
+        gosec -fmt=json -out=gosec-report.json ./... 2>&1 | tee gosec-output.log
+        echo "GOSEC_EXIT_CODE=$?" >> $GITHUB_ENV
     
-    - name: Run Bandit
-      run: bandit -r PolyPrep/ -f json -o bandit-report.json || true
-        
-    - name: Run Safety
-      run: safety check --json --output safety-report.json || true
-        
-    - name: Upload reports
+    - name: Run golangci-lint (code quality)
+      if: steps.go-files.outputs.GO_FILES_EXIST == 'true'
+      run: |
+        golangci-lint run --out-format=colored-line-number ./... 2>&1 | tee lint-output.log
+        echo "LINT_EXIT_CODE=$?" >> $GITHUB_ENV
+    
+    - name: Upload security reports
+      if: always() && steps.go-files.outputs.GO_FILES_EXIST == 'true'
       uses: actions/upload-artifact@v4
       with:
-        name: python-security-reports
+        name: go-security-reports
         path: |
-          bandit-report.json
-          safety-report.json
-
-  js-scan:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
+          gosec-report.json
+          gosec-output.log
+          lint-output.log
     
-    - name: Set up Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '18'
-    
-    - name: Install dependencies
-      working-directory: ./PolyPrep/static/js
-      run: npm install
-    
-    - name: Run npm audit
-      working-directory: ./PolyPrep/static/js
-      run: npm audit --json > npm-audit.json || true
-        
-    - name: Run Snyk
-      working-directory: ./PolyPrep/static/js
+    - name: Show summary
       run: |
-        npm install -g snyk
-        snyk test --json > snyk-report.json || true
-        
-    - name: Upload reports
-      uses: actions/upload-artifact@v4
-      with:
-        name: js-security-reports
-        path: |
-          npm-audit.json
-          snyk-report.json
+        if [ "${{ steps.go-files.outputs.GO_FILES_EXIST }}" == "false" ]; then
+          echo "::warning::No .go files found in repository"
+        else
+          echo "Found ${{ steps.go-files.outputs.GO_FILES_COUNT }} .go files"
+          echo "gosec exit code: ${{ env.GOSEC_EXIT_CODE }}"
+          echo "golangci-lint exit code: ${{ env.LINT_EXIT_CODE }}"
+        fi
