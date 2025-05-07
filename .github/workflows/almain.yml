@@ -8,6 +8,10 @@ on:
 jobs:
   go-security:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend/core  # Все Go-файлы находятся в этой директории
+
     steps:
     - uses: actions/checkout@v4
     
@@ -16,58 +20,38 @@ jobs:
       with:
         go-version: '1.21'
     
-    - name: Find all .go files
-      id: go-files
+    - name: Initialize Go module
       run: |
-        if find . -name '*.go' | grep -q .; then
-          echo "GO_FILES_EXIST=true" >> $GITHUB_OUTPUT
-          echo "GO_FILES_COUNT=$(find . -name '*.go' | wc -l)" >> $GITHUB_OUTPUT
-        else
-          echo "GO_FILES_EXIST=false" >> $GITHUB_OUTPUT
-        fi
-    
-    - name: Initialize Go module (if needed)
-      if: steps.go-files.outputs.GO_FILES_EXIST == 'true'
-      run: |
-        if [ ! -f "go.mod" ]; then
-          go mod init github.com/mamoedus/devsectest
-        fi
+        go mod init github.com/mamoedus/devsectest
         go mod tidy
     
+    - name: Download dependencies
+      run: |
+        go get github.com/Nerzal/gocloak/v13
+        go get gorm.io/gorm
+        go get github.com/gin-gonic/gin
+        go get github.com/aws/aws-sdk-go
+        go mod download
+    
     - name: Install security tools
-      if: steps.go-files.outputs.GO_FILES_EXIST == 'true'
       run: |
         go install github.com/securego/gosec/v2/cmd/gosec@latest
         go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
     
     - name: Run gosec (security audit)
-      if: steps.go-files.outputs.GO_FILES_EXIST == 'true'
       run: |
-        gosec -fmt=json -out=gosec-report.json ./... 2>&1 | tee gosec-output.log
+        gosec -exclude=G104 -fmt=json -out=gosec-report.json ./...
         echo "GOSEC_EXIT_CODE=$?" >> $GITHUB_ENV
     
     - name: Run golangci-lint (code quality)
-      if: steps.go-files.outputs.GO_FILES_EXIST == 'true'
       run: |
-        golangci-lint run --out-format=colored-line-number ./... 2>&1 | tee lint-output.log
+        golangci-lint run --out-format=colored-line-number --timeout=5m ./...
         echo "LINT_EXIT_CODE=$?" >> $GITHUB_ENV
     
     - name: Upload security reports
-      if: always() && steps.go-files.outputs.GO_FILES_EXIST == 'true'
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: go-security-reports
         path: |
           gosec-report.json
-          gosec-output.log
-          lint-output.log
-    
-    - name: Show summary
-      run: |
-        if [ "${{ steps.go-files.outputs.GO_FILES_EXIST }}" == "false" ]; then
-          echo "::warning::No .go files found in repository"
-        else
-          echo "Found ${{ steps.go-files.outputs.GO_FILES_COUNT }} .go files"
-          echo "gosec exit code: ${{ env.GOSEC_EXIT_CODE }}"
-          echo "golangci-lint exit code: ${{ env.LINT_EXIT_CODE }}"
-        fi
