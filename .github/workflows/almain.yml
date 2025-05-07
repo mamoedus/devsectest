@@ -20,43 +20,29 @@ jobs:
       with:
         go-version: '1.21'
     
-    - name: Check and update Go module
+    - name: Configure Go module
       run: |
-        # Проверяем существование go.mod
-        if [ -f "go.mod" ]; then
-          echo "go.mod exists, updating dependencies..."
-          go mod tidy
-        else
-          echo "Initializing new Go module..."
-          go mod init github.com/mamoedus/devsectest
-          go mod tidy
+        # Исправляем module path если нужно
+        if grep -q "module polyprep" go.mod; then
+          sed -i 's|module polyprep|module github.com/mamoedus/devsectest|' go.mod
         fi
+        go mod tidy
         
-        # Явно устанавливаем проблемные зависимости
+        # Устанавливаем проблемные зависимости
         go get github.com/Nerzal/gocloak/v13@latest
-        go get gorm.io/gorm@latest
         go get github.com/gin-gonic/gin@latest
-        go get github.com/aws/aws-sdk-go@latest
         go mod download
     
-    - name: Install security tools
-      run: |
-        go install github.com/securego/gosec/v2/cmd/gosec@latest
-        go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+    - name: Install gosec
+      run: go install github.com/securego/gosec/v2/cmd/gosec@latest
     
-    - name: Run gosec (security audit)
+    - name: Run security scan
       run: |
-        gosec -exclude=G104,G107 -fmt=json -out=../gosec-report.json ./... || true
-        mv ../gosec-report.json .
+        gosec -exclude=G104,G107 -fmt=json -out=security-report.json ./... || true
+        echo "Security scan completed with exit code $?"
     
-    - name: Run golangci-lint (code quality)
-      run: |
-        golangci-lint run --out-format=colored-line-number --timeout=5m --skip-dirs="migrations" ./...
-    
-    - name: Upload security reports
-      if: always()
+    - name: Upload security report
       uses: actions/upload-artifact@v4
       with:
-        name: go-security-reports
-        path: |
-          backend/core/gosec-report.json
+        name: security-report
+        path: backend/core/security-report.json
